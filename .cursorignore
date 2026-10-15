@@ -1,0 +1,8 @@
+# Defense in depth only; not a security boundary.
+private_repositories/
+protected_repositories/
+confidential_datasets/
+protected_indexes/
+model_checkpoints/
+.env
+.env.*

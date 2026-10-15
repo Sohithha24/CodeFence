@@ -1,0 +1,27 @@
+# Python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Protected code, datasets and large local artifacts (never put real private repos in this workspace)
+private_repositories/
+protected_repositories/
+confidential_datasets/
+protected_indexes/
+model_checkpoints/
+*.safetensors
+*.pt
+*.pth
+
+# OS/editor
+.DS_Store

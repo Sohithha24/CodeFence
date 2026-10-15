@@ -1,0 +1,6 @@
+---
+description: CodeFence development rules
+alwaysApply: true
+---
+
+Follow the permanent project instructions in `AGENTS.md`. Treat `PLAN.md` as future context, not a command to build additional features. Work on the current milestone only, never invent test results, and keep all example code synthetic or appropriately licensed and public.
