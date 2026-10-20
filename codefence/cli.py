@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from codefence.id_normalize import DEFAULT_MIN_NODES
 from codefence.indexer import index_repository
 from codefence.matcher import match_snippet_against_repo
 
@@ -68,9 +69,22 @@ def cmd_match(args: argparse.Namespace) -> int:
         print("Repository path is not a directory.", file=sys.stderr)
         return EXIT_ERROR
 
+    if args.min_nodes < 0:
+        print(
+            f"Invalid --min-nodes value: {args.min_nodes}. "
+            "The threshold must be zero or positive.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
     try:
         snippet, snippet_name = _read_snippet(args)
-        report = match_snippet_against_repo(root, snippet, snippet_filename=snippet_name)
+        report = match_snippet_against_repo(
+            root,
+            snippet,
+            snippet_filename=snippet_name,
+            min_nodes=args.min_nodes,
+        )
     except _CliError as exc:
         print(exc.message, file=sys.stderr)
         return EXIT_ERROR
@@ -80,6 +94,9 @@ def cmd_match(args: argparse.Namespace) -> int:
 
     if report.skipped_files:
         _print_skipped_files(report.skipped_files)
+
+    for note in report.identifier_norm_size_skips:
+        print(note, file=sys.stderr)
 
     if report.status == "error":
         print(report.message or "Scan could not be completed.", file=sys.stderr)
@@ -95,6 +112,15 @@ def cmd_match(args: argparse.Namespace) -> int:
             f"{match.function_name} in {match.file_path} "
             f"(snippet function: {match.snippet_function_name})"
         )
+        if match.match_type == "identifier_normalized":
+            print(f"  AST nodes: {match.ast_node_count}; min threshold: {match.min_nodes_threshold}")
+            if match.identifier_mappings:
+                mapping_text = ", ".join(
+                    f"{outgoing} -> {protected}" for outgoing, protected in match.identifier_mappings
+                )
+                print(f"  Identifier mappings: {mapping_text}")
+            if match.explanation:
+                print(f"  Explanation: {match.explanation}")
     return EXIT_MATCH
 
 
@@ -117,6 +143,16 @@ def build_parser() -> argparse.ArgumentParser:
     match_p.add_argument("--repo", required=True, help="Path to authorized local folder.")
     match_p.add_argument("--snippet", help="Snippet text (quote for multiline shells).")
     match_p.add_argument("--snippet-file", help="Path to a file containing the snippet.")
+    match_p.add_argument(
+        "--min-nodes",
+        type=int,
+        default=DEFAULT_MIN_NODES,
+        help=(
+            "Minimum AST node count (after docstring removal) required for "
+            "identifier_normalized matching only (default: %(default)s). "
+            "Lowering this value increases false-positive risk."
+        ),
+    )
     match_p.set_defaults(func=cmd_match)
 
     return parser

@@ -82,7 +82,7 @@ def normalize_function_node(node: ast.AST) -> str:
     """
     Structural AST text; ignores formatting, comments, and docstrings.
 
-    Identifier names stay as-is (rename-tolerant matching is a later milestone).
+    Identifier names stay as-is (see ``identifier_normalized`` in ``id_normalize``).
     """
     stripped = strip_docstrings(node)
     return ast.dump(stripped, include_attributes=False)

@@ -9,6 +9,7 @@ from pathlib import Path
 import ast
 
 from codefence.ast_util import extract_functions_from_tree, hash_function_node
+from codefence.id_normalize import normalize_function_identifiers
 
 # Directory names skipped during repository walks (not file patterns).
 DEFAULT_SKIP_DIR_NAMES = frozenset(
@@ -34,6 +35,10 @@ class IndexEntry:
     file_path: Path
     qualified_name: str
     structure_hash: str
+    identifier_normalized_hash: str | None = None
+    id_norm_binding_map: tuple[tuple[str, str], ...] = ()
+    ast_node_count: int = 0
+    id_norm_unsupported_reason: str | None = None
 
 
 @dataclass
@@ -104,11 +109,16 @@ def index_repository(root: Path) -> IndexBuildReport:
         functions = extract_functions_from_tree(tree)
         files_indexed += 1
         for func in functions:
+            id_outcome = normalize_function_identifiers(func.node)
             entries.append(
                 IndexEntry(
                     file_path=path,
                     qualified_name=func.qualified_name,
                     structure_hash=hash_function_node(func.node),
+                    identifier_normalized_hash=id_outcome.structure_hash if id_outcome.ok else None,
+                    id_norm_binding_map=id_outcome.original_to_normalized if id_outcome.ok else (),
+                    ast_node_count=id_outcome.node_count,
+                    id_norm_unsupported_reason=id_outcome.unsupported_reason,
                 )
             )
 
@@ -126,4 +136,15 @@ def build_hash_lookup(entries: list[IndexEntry]) -> dict[str, list[IndexEntry]]:
     lookup: dict[str, list[IndexEntry]] = {}
     for entry in entries:
         lookup.setdefault(entry.structure_hash, []).append(entry)
+    return lookup
+
+
+def build_identifier_normalized_lookup(
+    entries: list[IndexEntry],
+) -> dict[str, list[IndexEntry]]:
+    lookup: dict[str, list[IndexEntry]] = {}
+    for entry in entries:
+        if entry.identifier_normalized_hash is None:
+            continue
+        lookup.setdefault(entry.identifier_normalized_hash, []).append(entry)
     return lookup

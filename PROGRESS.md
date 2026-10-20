@@ -1,28 +1,23 @@
 # CodeFence Progress Log
 
-## Current milestone: 1 — Normalized AST Exact Matching
-Status: **Complete (pre–Milestone 2 edge cases verified)**
+## Current milestone: 2A — AST-Based Identifier Normalization
+Status: **Complete (awaiting review)**
 
-### Acceptance checklist (Milestone 1)
-- [x] Reads `.py` files from a specified local folder without executing them.
-- [x] Extracts top-level and nested Python functions using `ast` (methods: `ClassName.method_name`; nested: `outer.inner`).
-- [x] Accepts an outgoing snippet via file or pasted text.
-- [x] Detects function matches after AST normalization, ignoring formatting, comments, and docstrings.
-- [x] Reports file path, function name, match type (`exact_ast`), and clear 'no match' output.
-- [x] Reports invalid or partial Python snippets clearly without crashing.
-- [x] Includes an exact-copy test, spacing/comments test, unrelated-code test, and invalid-input test.
-- [x] Test suite runs successfully on the developer's machine.
-- [x] README updated with real usage commands and honest limitations.
+### Acceptance checklist (Milestone 2A)
+- [x] Preserve existing `exact_ast` matching unchanged in behavior for Milestone 1 scenarios.
+- [x] Add separate `identifier_normalized` matching with binding-based renaming (`FUNC`, `VAR_n`).
+- [x] Preserve built-ins, imports, attributes, keyword labels, and non-local/global reads.
+- [x] Configurable minimum AST node threshold (default 20) for identifier-normalized matches only.
+- [x] Record size-based skips without claiming safety.
+- [x] Explainable matches: method, paths, node count, threshold, mappings, explanation.
+- [x] Report all identifier-normalized matches when multiple protected functions align.
+- [x] Fail-closed on unsupported normalization scope when no exact match exists.
+- [x] CLI exit codes 0 / 1 / 2 preserved; `--min-nodes` flag added.
+- [x] `tests/test_identifier_normalization.py` with required scenarios and boilerplate fixtures.
+- [x] README updated with algorithm, limitations, and test instructions.
 
-### Pre–Milestone 2 fixes
-- [x] Docstrings stripped from `def`, `async def`, and `class` nodes before hashing.
-- [x] `match` exit codes: 0 = no match, 1 = match, 2 = error.
-- [x] Incomplete repository scan + no match → error (not exit 0).
-- [x] Skipped protected files listed on stderr (paths only, no source).
-- [x] Regression tests for docstrings and CLI exit codes.
-- [x] Valid Python without a function → error (exit 2), not no-match.
-- [x] Repository with no indexable functions → error (exit 2).
-- [x] Function plus loose top-level code → error (exit 2), including when the function would otherwise match.
+### Milestone 1 (complete)
+See journal entries below; all Milestone 1 acceptance items remain satisfied.
 
 ### Journal
 **Entry 0 — Starter files created**
@@ -41,15 +36,24 @@ Status: **Complete (pre–Milestone 2 edge cases verified)**
 - Added `examples/synthetic_repo_no_functions/` and `tests/test_edge_cases_pre_m2.py`.
 - **Tests run:** `python -m unittest discover -s tests -v` → 32 run, 31 passed, 0 failed, 1 skipped (symlink test).
 
-**Next action:** Begin Milestone 2 only after review.
+**Entry 4 — Milestone 2A identifier normalization**
+- Added `codefence/id_normalize.py` (binding-aware rename, node counting, unsupported-scope detection).
+- Extended indexer with identifier-normalized hashes and binding maps; extended matcher and CLI output.
+- Added `tests/test_identifier_normalization.py`, `examples/snippets/clamp_renamed.py`.
+- **Tests run:** `python -m unittest discover -s tests -v` → 59 run, 58 passed, 0 failed, 1 skipped (symlink test).
 
-### Remaining limitations (explicit for Milestone 2)
-- Variable renaming
-- Function renaming
-- Decorator modifications
-- Type annotation modifications
-- Partial code snippets (body fragments without a `def` header)
-- Module snippets must not mix functions with other top-level statements
-- No fuzzy/ML matching; function-level only; in-memory index rebuilt each run
+**Entry 5 — Milestone 2A pre-commit hardening**
+- Scope regression tests (implicit/explicit global, shadowed built-ins, full clamp mappings).
+- `--min-nodes` validation (reject negative); multi-function fail-closed test; README/PROGRESS updates.
+- **Tests run:** `python -m unittest discover -s tests -v` → 66 run, 65 passed, 0 failed, 1 skipped (symlink test).
+
+**Next action:** Commit Milestone 2A after approval; do not start Milestone 2B until approved.
+
+### Known limitations (Milestone 2A)
+- Identifier normalization supports single-function bodies only; nested defs, lambdas, comprehensions, and inner classes are rejected for that method.
+- No MinHash, ML, decorator/type normalization, or persistent index.
+- `MIN_NODES = 20` is provisional—not tuned on labeled data yet.
+- Module snippets must not mix functions with other top-level statements.
+- Similarity is evidence for review, not proof of ownership.
 
 *For each session, record: what changed, which tests ran, what failed, what you learned, and the next action.*

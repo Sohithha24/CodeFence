@@ -1,6 +1,6 @@
 # CodeFence
 
-Local-first tool that checks whether an outgoing Python function snippet **exactly matches** the normalized structure of code in an authorized local folder—ignoring spacing, comments, and **docstrings**, but not renamed variables yet.
+Local-first tool that checks whether an outgoing Python function snippet matches code in an authorized local folder—using **exact structural AST matching** and **identifier-normalized AST matching** (Milestone 2A).
 
 ## Requirements
 
@@ -14,8 +14,12 @@ From the project root:
 # List indexed functions in the synthetic example repo
 python -m codefence index --repo examples/synthetic_repo
 
-# Match (protected code found) — exit code 1
+# Exact structural match — exit code 1
 python -m codefence match --repo examples/synthetic_repo --snippet-file examples/snippets/clamp_compact.py
+echo $LASTEXITCODE   # expect 1
+
+# Renamed copy (identifier-normalized match) — exit code 1
+python -m codefence match --repo examples/synthetic_repo --snippet-file examples/snippets/clamp_renamed.py
 echo $LASTEXITCODE   # expect 1
 
 # No match — exit code 0 (not a safety guarantee)
@@ -24,14 +28,6 @@ echo $LASTEXITCODE   # expect 0
 
 # Invalid snippet — exit code 2
 python -m codefence match --repo examples/synthetic_repo --snippet "def broken("
-echo $LASTEXITCODE   # expect 2
-
-# Valid Python, no function — exit code 2
-python -m codefence match --repo examples/synthetic_repo --snippet "internal_token = \"x\""
-echo $LASTEXITCODE   # expect 2
-
-# Repository with no indexable functions — exit code 2
-python -m codefence match --repo examples/synthetic_repo_no_functions --snippet "def add(a, b): return a + b"
 echo $LASTEXITCODE   # expect 2
 ```
 
@@ -43,18 +39,50 @@ On Unix shells, use `$?` instead of `$LASTEXITCODE`.
 python -m unittest discover -s tests -v
 ```
 
+Milestone 2A tests live in `tests/test_identifier_normalization.py`.
+
 ## How it works
 
 1. **Index** — Walk an authorized directory tree, read `.py` files as text (never execute), skip symlinks and common generated/vendor folders.
 2. **Extract** — Parse with `ast` and collect every `def` / `async def`, including nested functions and class methods.
-3. **Normalize** — Strip **docstrings** from functions, async functions, and classes in the function subtree; then `ast.dump(..., include_attributes=False)` and SHA-256 hash.
-4. **Match** — Parse the outgoing snippet the same way; report `exact_ast` matches with file path and qualified function name.
+3. **Normalize (exact_ast)** — Strip docstrings, then `ast.dump(..., include_attributes=False)` and SHA-256 hash. Spacing, comments, and docstrings do not affect equality; **identifier names still matter** for this method.
+4. **Normalize (identifier_normalized)** — On a separate path, rename **locally bound** identifiers to stable slots (`FUNC`, `VAR_0`, `VAR_1`, …) by binding order, then hash the same way. Functions that differ only by consistent renaming can match.
+5. **Match** — Compare the outgoing snippet against the index. Report all relevant matches with method, paths, optional identifier mappings, and explanations.
+
+### Identifier normalization (Milestone 2A)
+
+Bindings are normalized, not renamed blindly:
+
+| Role | Normalized label |
+| --- | --- |
+| Function’s own name (including recursive calls) | `FUNC` |
+| Parameters (declaration order) | `VAR_0`, `VAR_1`, … |
+| Other local bindings | Next `VAR_n` in **first-assignment / binding order** in the function body |
+
+**Preserved (not renamed):** unshadowed built-ins (`len`, `range`, …), imported module/symbol names, **attribute** names (`customer.balance` keeps `balance`), keyword-argument **labels** at call sites, and names read from outer/global scope without a local binding.
+
+**Why binding-based normalization:** Two functions that rename `amount`→`value` and `score`→`result` together keep the same usage graph; arbitrary string equality on names would miss modified copies.
+
+**Identifier mappings** on a match align outgoing and protected names through shared normalized slots (for example `value -> amount`). Mappings are derived from analysis; they are not guessed.
+
+### Minimum size (`--min-nodes`, default 20)
+
+Short functions are easy false positives under identifier normalization (for example tiny getters or `__init__` assigners). The **20-node** threshold applies **only** to `identifier_normalized` matching (node count is after docstring removal). **`exact_ast` is unaffected.**
+
+This default is a **provisional starting point** for development—not a validated security bound. Tune it later with labeled, repository-split evaluation data. When normalization is skipped for size, stderr notes that skip; **that is not a “safe to share” claim.**
+
+**Lowering `--min-nodes` increases false-positive risk** (unrelated short functions can look alike after renaming). Negative values are rejected with exit code **2**.
+
+Configure:
+
+```powershell
+python -m codefence match --repo examples/synthetic_repo --snippet-file examples/snippets/clamp_renamed.py --min-nodes 20
+```
 
 ### Docstring normalization
 
 - The first string literal in a function, `async def`, or class body (PEP 257 docstring position) is removed before hashing.
-- **Ordinary string expressions** (for example `tag = "item"`) stay in the AST and still affect matching.
-- Changing or removing a docstring does **not** break an otherwise identical `exact_ast` match.
+- Ordinary string expressions (for example `tag = "item"`) stay in the AST and still affect matching.
 
 ### Function naming
 
@@ -72,35 +100,34 @@ Integrations should **only allow further processing when the command exits 0**, 
 | --- | --- | --- |
 | **0** | No match | Scan completed; no structural match in the indexed repository |
 | **1** | Match | Protected-code structure matched (review required) |
-| **2** | Error | Invalid snippet, unreadable snippet file, incomplete repository scan, or unexpected failure |
+| **2** | Error | Invalid snippet, unreadable snippet file, incomplete repository scan, unsupported normalization scope, or unexpected failure |
 
 Exit **2** (not 0) also applies when:
 
-- The snippet is valid Python but contains **no analyzable function** (for example only `internal_token = "..."`).
-- The snippet mixes a `def` / `async def` with **other top-level statements** (assignments, imports, etc.). The result is not a clean no-match or match.
-- The repository scan finishes but **no protected functions** were indexed (`examples/synthetic_repo_no_functions/`).
+- The snippet is valid Python but contains **no analyzable function**.
+- The snippet mixes a `def` / `async def` with **other top-level statements**.
+- The repository has **no indexable functions**.
+- The snippet uses **scoping constructs that Milestone 2A cannot normalize reliably** (for example nested `def`, lambdas, comprehensions) and there is no `exact_ast` match.
+- A **multi-function snippet** where **any** function cannot undergo reliable identifier normalization, and **no** `exact_ast` or `identifier_normalized` match is found—the whole submission returns **exit 2** (conservative fail-closed behavior, not a clean no-match).
 
 - **Exit 0 is not “safe to share.”** It only means no match was found in the files that were successfully indexed.
-- If any protected `.py` file cannot be read or parsed, skipped paths are listed on stderr. When no match is found in that situation, the command returns **exit 2**, not 0.
+- Skipped protected paths are listed on stderr; incomplete scans with no match return **exit 2**.
 - Error output does not include raw snippet or repository source.
 
 ## Output examples
 
-- **Match (exit 1):** `MATCH (exact_ast): clamp in ...\helpers.py (snippet function: clamp)`
+- **Exact match (exit 1):** `MATCH (exact_ast): clamp in ...\helpers.py (snippet function: clamp)`
+- **Renamed match (exit 1):** `MATCH (identifier_normalized): ...` with AST node count, threshold, `Identifier mappings: ...`, and a short explanation.
 - **No match (exit 0):** message includes *this is not a guarantee that code is safe to share*
-- **Error (exit 2):** short reason on stderr; `Skipped protected file: ...` when indexing failed for specific paths
+- **Size skip (stderr):** identifier-normalized matching skipped for a small outgoing function (not a safety guarantee)
 
-## Known limitations (through Milestone 2 prep)
+## Known limitations (through Milestone 2A)
 
-- Variable renaming
-- Function renaming
-- Decorator changes
-- Type annotation changes
-- Partial code snippets (non-function fragments)
-- Snippets must be function-only at module top level (no mixed assignments/imports)
-- Exact executable structure only (no fuzzy or ML similarity yet)
-- Function-level granularity; no persistent index file or editor integration yet
-- Similarity is evidence for review, not proof of ownership or misconduct
+- Identifier normalization does **not** support nested functions, lambdas, comprehensions, or classes defined inside the analyzed function body; such cases error when no exact match exists.
+- No MinHash, ML, decorator/type-annotation normalization, or partial snippets.
+- Snippets must be function-only at module top level (no mixed assignments/imports).
+- Function-level granularity; in-memory index rebuilt each run; no editor integration.
+- Similarity is evidence for review, not proof of ownership or misconduct.
 
 ## Project docs
 
