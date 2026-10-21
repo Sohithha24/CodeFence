@@ -10,6 +10,11 @@ import ast
 
 from codefence.ast_util import extract_functions_from_tree, hash_function_node
 from codefence.id_normalize import normalize_function_identifiers
+from codefence.token_similarity import (
+    DEFAULT_SHINGLE_SIZE,
+    fingerprint_function_tokens,
+    literal_token_multiset,
+)
 
 # Directory names skipped during repository walks (not file patterns).
 DEFAULT_SKIP_DIR_NAMES = frozenset(
@@ -39,6 +44,11 @@ class IndexEntry:
     id_norm_binding_map: tuple[tuple[str, str], ...] = ()
     ast_node_count: int = 0
     id_norm_unsupported_reason: str | None = None
+    token_shingles: frozenset[str] = frozenset()
+    token_minhash_hashvalues: tuple[int, ...] = ()
+    token_count: int = 0
+    token_unsupported_reason: str | None = None
+    token_literal_multiset: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -110,6 +120,11 @@ def index_repository(root: Path) -> IndexBuildReport:
         files_indexed += 1
         for func in functions:
             id_outcome = normalize_function_identifiers(func.node)
+            token_fp = fingerprint_function_tokens(
+                source,
+                func.node,
+                shingle_size=DEFAULT_SHINGLE_SIZE,
+            )
             entries.append(
                 IndexEntry(
                     file_path=path,
@@ -119,6 +134,13 @@ def index_repository(root: Path) -> IndexBuildReport:
                     id_norm_binding_map=id_outcome.original_to_normalized if id_outcome.ok else (),
                     ast_node_count=id_outcome.node_count,
                     id_norm_unsupported_reason=id_outcome.unsupported_reason,
+                    token_shingles=token_fp.shingles if token_fp.ok else frozenset(),
+                    token_minhash_hashvalues=token_fp.minhash_hashvalues if token_fp.ok else (),
+                    token_count=len(token_fp.normalized_tokens) if token_fp.ok else 0,
+                    token_unsupported_reason=token_fp.unsupported_reason,
+                    token_literal_multiset=(
+                        literal_token_multiset(token_fp.normalized_tokens) if token_fp.ok else frozenset()
+                    ),
                 )
             )
 

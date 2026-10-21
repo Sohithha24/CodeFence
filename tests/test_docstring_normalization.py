@@ -94,7 +94,7 @@ def label_tag(name):
             report_diff = match_snippet_against_repo(root, altered)
             self.assertEqual(report_diff.status, "no_match")
 
-    def test_different_executable_logic_does_not_match(self) -> None:
+    def test_different_executable_logic_does_not_exact_match(self) -> None:
         different = '''
 def clamp(value, low, high):
     """Harmless docstring change."""
@@ -105,7 +105,14 @@ def clamp(value, low, high):
     return value + 1
 '''
         report = match_snippet_against_repo(REPO, different)
-        self.assertEqual(report.status, "no_match")
+        self.assertFalse(any(m.match_type == "exact_ast" for m in report.matches))
+        self.assertFalse(any(m.match_type == "identifier_normalized" for m in report.matches))
+        token_reviews = [m for m in report.matches if m.match_type == "token_jaccard"]
+        if token_reviews:
+            self.assertEqual(report.status, "match")
+            self.assertTrue(token_reviews[0].literals_differ)
+        else:
+            self.assertEqual(report.status, "no_match")
 
     def test_same_hash_when_only_docstrings_differ(self) -> None:
         a = parse_source_functions(CLAMP_NO_DOC).functions[0].node

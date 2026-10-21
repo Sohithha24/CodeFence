@@ -8,7 +8,13 @@ from pathlib import Path
 
 from codefence.id_normalize import DEFAULT_MIN_NODES
 from codefence.indexer import index_repository
-from codefence.matcher import match_snippet_against_repo
+from codefence.matcher import (
+    DEFAULT_MIN_SHINGLE_COUNT,
+    DEFAULT_MIN_TOKEN_COUNT,
+    DEFAULT_REVIEW_JACCARD_THRESHOLD,
+    match_snippet_against_repo,
+)
+from codefence.token_similarity import DEFAULT_SHINGLE_SIZE
 
 # ``match`` exit codes for fail-closed integrations.
 EXIT_NO_MATCH = 0
@@ -76,6 +82,12 @@ def cmd_match(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_ERROR
+    if args.shingle_size < 1:
+        print("Invalid --shingle-size: must be at least 1.", file=sys.stderr)
+        return EXIT_ERROR
+    if args.review_jaccard < 0.0 or args.review_jaccard > 1.0:
+        print("Invalid --review-jaccard: must be between 0.0 and 1.0.", file=sys.stderr)
+        return EXIT_ERROR
 
     try:
         snippet, snippet_name = _read_snippet(args)
@@ -84,6 +96,10 @@ def cmd_match(args: argparse.Namespace) -> int:
             snippet,
             snippet_filename=snippet_name,
             min_nodes=args.min_nodes,
+            shingle_size=args.shingle_size,
+            review_jaccard_threshold=args.review_jaccard,
+            min_token_count=args.min_tokens,
+            min_shingle_count=args.min_shingles,
         )
     except _CliError as exc:
         print(exc.message, file=sys.stderr)
@@ -97,6 +113,8 @@ def cmd_match(args: argparse.Namespace) -> int:
 
     for note in report.identifier_norm_size_skips:
         print(note, file=sys.stderr)
+    for note in report.token_review_skips:
+        print(note, file=sys.stderr)
 
     if report.status == "error":
         print(report.message or "Scan could not be completed.", file=sys.stderr)
@@ -107,8 +125,13 @@ def cmd_match(args: argparse.Namespace) -> int:
         return EXIT_NO_MATCH
 
     for match in report.matches:
+        prefix = (
+            "REVIEW_REQUIRED"
+            if match.evidence_kind == "review_required"
+            else "MATCH"
+        )
         print(
-            f"MATCH ({match.match_type}): "
+            f"{prefix} ({match.match_type}): "
             f"{match.function_name} in {match.file_path} "
             f"(snippet function: {match.snippet_function_name})"
         )
@@ -119,8 +142,25 @@ def cmd_match(args: argparse.Namespace) -> int:
                     f"{outgoing} -> {protected}" for outgoing, protected in match.identifier_mappings
                 )
                 print(f"  Identifier mappings: {mapping_text}")
-            if match.explanation:
-                print(f"  Explanation: {match.explanation}")
+        if match.match_type in ("token_jaccard", "token_minhash"):
+            minhash_text = (
+                f"{match.minhash_jaccard_estimate:.4f}"
+                if match.minhash_jaccard_estimate is not None
+                else "n/a"
+            )
+            print(
+                f"  Exact Jaccard: {match.jaccard_score:.4f}; "
+                f"MinHash estimate (supporting): {minhash_text}; "
+                f"shared shingles: {match.shared_shingle_count}; "
+                f"review threshold: {match.review_threshold:.4f}; "
+                f"shingle size: {match.shingle_size}"
+            )
+            if match.literal_evidence_note:
+                print(f"  Literal evidence: {match.literal_evidence_note}")
+            if match.review_reason:
+                print(f"  Review reason: {match.review_reason}")
+        if match.explanation:
+            print(f"  Explanation: {match.explanation}")
     return EXIT_MATCH
 
 
@@ -152,6 +192,33 @@ def build_parser() -> argparse.ArgumentParser:
             "identifier_normalized matching only (default: %(default)s). "
             "Lowering this value increases false-positive risk."
         ),
+    )
+    match_p.add_argument(
+        "--shingle-size",
+        type=int,
+        default=DEFAULT_SHINGLE_SIZE,
+        help="Contiguous token shingle size for token similarity (default: %(default)s).",
+    )
+    match_p.add_argument(
+        "--review-jaccard",
+        type=float,
+        default=DEFAULT_REVIEW_JACCARD_THRESHOLD,
+        help=(
+            "Experimental Jaccard threshold for REVIEW_REQUIRED token candidates "
+            "(default: %(default)s; not a production block threshold)."
+        ),
+    )
+    match_p.add_argument(
+        "--min-tokens",
+        type=int,
+        default=DEFAULT_MIN_TOKEN_COUNT,
+        help="Minimum normalized tokens required for token review candidates.",
+    )
+    match_p.add_argument(
+        "--min-shingles",
+        type=int,
+        default=DEFAULT_MIN_SHINGLE_COUNT,
+        help="Minimum shingles required for token review candidates.",
     )
     match_p.set_defaults(func=cmd_match)
 

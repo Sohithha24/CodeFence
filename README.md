@@ -1,10 +1,16 @@
 # CodeFence
 
-Local-first tool that checks whether an outgoing Python function snippet matches code in an authorized local folder—using **exact structural AST matching** and **identifier-normalized AST matching** (Milestone 2A).
+Local-first tool that checks whether an outgoing Python function snippet matches code in an authorized local folder—using **exact structural AST matching**, **identifier-normalized AST matching** (Milestone 2A), and **token-based similarity** with exact Jaccard and MinHash (Milestone 2B).
 
 ## Requirements
 
-- Python 3.10+ (standard library only; no pip install required)
+- Python 3.10+
+- Core matching (Milestones 1–2A): standard library only
+- MinHash (Milestone 2B): install optional dependency `datasketch` (see `requirements.txt`)
+
+```powershell
+pip install -r requirements.txt
+```
 
 ## Quick start
 
@@ -39,7 +45,8 @@ On Unix shells, use `$?` instead of `$LASTEXITCODE`.
 python -m unittest discover -s tests -v
 ```
 
-Milestone 2A tests live in `tests/test_identifier_normalization.py`.
+- Milestone 2A: `tests/test_identifier_normalization.py`
+- Milestone 2B: `tests/test_token_similarity.py` (requires `datasketch` for MinHash tests)
 
 ## How it works
 
@@ -47,7 +54,27 @@ Milestone 2A tests live in `tests/test_identifier_normalization.py`.
 2. **Extract** — Parse with `ast` and collect every `def` / `async def`, including nested functions and class methods.
 3. **Normalize (exact_ast)** — Strip docstrings, then `ast.dump(..., include_attributes=False)` and SHA-256 hash. Spacing, comments, and docstrings do not affect equality; **identifier names still matter** for this method.
 4. **Normalize (identifier_normalized)** — On a separate path, rename **locally bound** identifiers to stable slots (`FUNC`, `VAR_0`, `VAR_1`, …) by binding order, then hash the same way. Functions that differ only by consistent renaming can match.
-5. **Match** — Compare the outgoing snippet against the index. Report all relevant matches with method, paths, optional identifier mappings, and explanations.
+5. **Token similarity (Milestone 2B)** — Tokenize each function (no execution), build configurable **token shingles**, compute **exact Jaccard** over shingle sets and **MinHash** estimates (`num_perm=128`, seed `42`). **Exact Jaccard alone** decides review candidacy (MinHash is supporting evidence and may later help retrieve candidates in large repos).
+6. **Match** — Compare the outgoing snippet against the index. Confirmed methods: `exact_ast`, `identifier_normalized`. Token methods report **`REVIEW_REQUIRED`** evidence (`token_jaccard`, `token_minhash`); they are **not** confirmed proprietary leakage.
+
+### Token normalization (Milestone 2B)
+
+- Uses the `tokenize` module on extracted function source (from `ast.get_source_segment`).
+- **Dropped:** comments, whitespace-only tokens, indentation markers.
+- **Preserved:** `NAME` (identifiers stay meaningful), `NUMBER` / `STRING` literals, operators, keywords.
+- **Shingle size:** default **5** contiguous normalized tokens (`--shingle-size`).
+- **Exact Jaccard:** \|A ∩ B\| / \|A ∪ B\| (empty union → 0.0).
+- **MinHash:** `datasketch` with **128** permutations, fixed seed for reproducibility. MinHash estimates are validated against exact Jaccard on synthetic fixtures; MinHash is not claimed to be more accurate than exact Jaccard.
+
+### Token review policy (conservative)
+
+- **`REVIEW_REQUIRED`** lines use exit code **1** (potential match / manual review), same as confirmed matches, but output prefix distinguishes them.
+- **Exact Jaccard** (not MinHash noise) must meet **`--review-jaccard`** (default **0.55**, experimental—not production-tuned).
+- **Literal differences** are reported as **evidence** (counts/categories only—no raw literal values in output). High Jaccard with differing literals can still be `REVIEW_REQUIRED`; literals alone never prove leakage.
+- **`--min-tokens`** (default 12) and **`--min-shingles`** (default 5) filter short boilerplate.
+- Renamed-only copies remain the job of `identifier_normalized` (token fingerprints keep identifier names).
+- Token output includes shared shingle count, literal evidence note, and review reason.
+- Similarity is evidence for review, not proof of copying.
 
 ### Identifier normalization (Milestone 2A)
 
@@ -121,12 +148,14 @@ Exit **2** (not 0) also applies when:
 - **No match (exit 0):** message includes *this is not a guarantee that code is safe to share*
 - **Size skip (stderr):** identifier-normalized matching skipped for a small outgoing function (not a safety guarantee)
 
-## Known limitations (through Milestone 2A)
+## Known limitations (through Milestone 2B)
 
 - Identifier normalization does **not** support nested functions, lambdas, comprehensions, or classes defined inside the analyzed function body; such cases error when no exact match exists.
 - No MinHash, ML, decorator/type-annotation normalization, or partial snippets.
 - Snippets must be function-only at module top level (no mixed assignments/imports).
 - Function-level granularity; in-memory index rebuilt each run; no editor integration.
+- Token similarity is sensitive to statement add/remove and reordering; thresholds require labeled tuning.
+- MinHash requires `datasketch`; without it, exact Jaccard still runs but MinHash signatures are omitted.
 - Similarity is evidence for review, not proof of ownership or misconduct.
 
 ## Project docs

@@ -1,0 +1,2 @@
+# Optional runtime dependency for Milestone 2B token MinHash (install for full 2B tests).
+datasketch>=1.6.4,<2
